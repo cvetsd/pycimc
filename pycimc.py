@@ -2,6 +2,8 @@
 
 __author__ = 'Rob Horner (robert@horners.org)'
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import xml.etree.ElementTree as ET
 from collections import namedtuple, defaultdict
 import time, sys
@@ -9,6 +11,9 @@ import inspect
 from pprint import pprint
 import requests
 import logging
+import config
+import cveLogger
+from cveLogger import mylogger
 from exception_mapper import *
 
 LOGIN_TIMEOUT = 5.0
@@ -24,8 +29,7 @@ def timeit(method):
         tstart = time.time()
         result = method(*args, **kw)
         tend = time.time()
-        print '==> %r (%r, %r) %2.2f sec' % \
-              (method.__name__, args, kw, tend-tstart)
+        print(f'==> {method.__name__} ({args}, {kw}) {tend-tstart} sec')
         return result
     return timed
 
@@ -57,7 +61,7 @@ class UcsServer():
 
     def __exit__(self, exc_type, exc_inst, exc_tb):
         if exc_type is not None:
-            print '%s' % exc_inst.args[0]
+            print(str(exc_inst.args[0]))
             # print '%s' % exc_tb.__dict__
             return True
         # print 'Returning None which is a false value, meaning, no execeptions were handled'
@@ -87,13 +91,13 @@ class UcsServer():
                     self.version = response.attrib['outVersion']
             return self
         except TimeoutError:
-            print 'Timeout connecting to %s' % self.ipaddress
+            print('Timeout connecting to {self.ipaddress}')
             sys.exit()
         except ConnectionError as err:
-            print 'Could not connect to %s: %s' % (self.ipaddress, err)
+            print (f'Could not connect to {self.ipaddress}: {err}')
             sys.exit()
         except ResponseError as err:
-            print 'Could not connect to %s: %s' % (self.ipaddress, err)
+            print (f'Could not connect to {self.ipaddress}: {err}')
             sys.exit()
 
     # @timeit
@@ -127,7 +131,7 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             return True
         else:
-            print 'power() must be called with "force=True" to change the power status of the server'
+            print('power() must be called with "force=True" to change the power status of the server')
             return False
 
     def refresh_cookie(self):
@@ -165,7 +169,7 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for i in out_configs.getchildren():
-                print i
+                print(i)
                 try:
                     bootorder_dict[i.attrib['order']] = i.attrib['type']
                 except:
@@ -220,11 +224,11 @@ class UcsServer():
                 adminAction='make-unconfigured-good'/>
             </inConfig>
         </configConfMo>''' % (self.session_cookie, controller_path, phys_drive_id, controller_path, phys_drive_id, phys_drive_id)
-            print 'will execute %s' % command_string
+            print(f'will execute {command_string}')
             # Just printing out for now. Don't actually execute the command
             #  response_element = post_request(self.ipaddress, command_string, timeout=CREATE_DRIVE_TIMEOUT)
         else:
-            print 'configure_pd_as_unconfigured_good_from_jbod() must be called with "force=True" to force to JBOD'
+            print('configure_pd_as_unconfigured_good_from_jbod() must be called with "force=True" to force to JBOD')
             return False
 
 
@@ -233,14 +237,14 @@ class UcsServer():
         Print out the drive inventory dict in a user-friendly format.
         """
         if any(self.inventory['drives']):
-            print 'Virtual Drives:'
+            print('Virtual Drives:')
             for vd in self.inventory['drives']['storageVirtualDrive']:
-                print "{id:>2} {dn:<48} {size:>11}  {raidLevel}  {name}".format(**vd)
-            print 'Physical Drives:'
+                print("{id:>2} {dn:<48} {size:>11}  {raidLevel}  {name}".format(**vd))
+            print('Physical Drives:')
             for pd in self.inventory['drives']['storageLocalDisk']:
-                print "{id:>2} {dn:<48} {coercedSize:>11}  {pdStatus}".format(**pd)
+                print("{id:>2} {dn:<48} {coercedSize:>11}  {pdStatus}".format(**pd))
         else:
-            print 'No drive inventory found! Please run "get_drive_inventory() on the server instance first.'
+            print('No drive inventory found! Please run "get_drive_inventory() on the server instance first.')
 
     @timeit
     def create_virtual_drive(self, controller_path, virtual_drive_name, raid_level, raid_size, drive_group, write_policy='Write Back Good BBU', force=False, debug=False):
@@ -270,11 +274,11 @@ class UcsServer():
                </inConfig>
             </configConfMo>''' % (self.session_cookie, controller_path, controller_path, virtual_drive_name, raid_level, raid_size, drive_group, write_policy)
             if debug:
-                print 'XML Drive create command:',command_string
+                print(f'XML Drive create command: {command_string}')
             response_element = post_request(self.ipaddress, command_string, timeout=CREATE_DRIVE_TIMEOUT)
             return True
         else:
-            print 'create_virtual_drive() must be called with "force=True" to create the drive'
+            print('create_virtual_drive() must be called with "force=True" to create the drive')
             return False
 
     def get_interface_inventory(self):
@@ -299,15 +303,17 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for config in out_configs.getchildren():
+                print(f'config: {config}')
                 adaptorUnit_list.append(config.attrib)
             #self.inventory['adaptor'] = adaptorUnit_list
-
+            print('config should have printed')
             # query adaptorExtEthIf classId to find all physical network interfaces
             command_string = '<configResolveClass cookie="%s" inHierarchical="false" classId="%s"/>' %\
                              (self.session_cookie, 'adaptorExtEthIf')
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for config in out_configs.getchildren():
+                print(f'config2: {config}')
                 adaptorExtEthIf_list.append(config.attrib)
             #self.inventory['ext_eth_if'] = adaptorExtEthIf_list
 
@@ -317,6 +323,7 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for config in out_configs.getchildren():
+                print(f'config3: {config}')
                 adaptorHostEthIf_list.append(config.attrib)
             #self.inventory['host_eth_if'] = adaptorHostEthIf_list
 
@@ -404,13 +411,14 @@ class UcsServer():
         """
         Set the BIOS settings to Cisco's recommendations for virtualization
         """
-        with RemapExceptions():
+        #next section commented out by George on 3/3/2022
+        """with RemapExceptions():
             command_string = configConfMo_prepend_string % self.session_cookie
             for item in config.CUSTOM_BIOS_SETTINGS:
                 command_string += configConfMo_template.format(item=item)
             command_string += configConfMo_append_string
             response_element = post_request(self.ipaddress, command_string)
-
+        """
     def set_sol_adminstate(self, state='enable', speed='115200', comport='com0'):
         """
         Change the admin state of the Serial over LAN feature. Valid states are 'enable' and 'disable'.
@@ -422,7 +430,7 @@ class UcsServer():
                             </inConfig></configConfMo>' % (self.session_cookie, state, speed, comport)
         with RemapExceptions():
             response_element = post_request(self.ipaddress, command_string)
-            print 'Changed SOL admin state to', state
+            print(f'Changed SOL admin state to {state}')
 
     def get_users(self):
 
@@ -446,7 +454,7 @@ class UcsServer():
                             for user in self.inventory['users']
                             if user['name'] == userid)
         except StopIteration:
-            print 'Cannot find user', userid
+            print(f'Cannot find user {userid}')
             return False
 
         # ready to go. Change the user password
@@ -475,20 +483,28 @@ class UcsServer():
 
 def post_request(server, command_string, timeout=REQUEST_TIMEOUT):
     url = "https://%s/nuova" % server
+    myHeader = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
     try:
         with RemapExceptions():
-            response = ET.fromstring(requests.post(url, data=command_string, verify=False, timeout=timeout).text)
+            mylogger(f'URL is: {url}')
+            mylogger(f'command_string: {command_string}')
+            myResp = requests.post(url, data=command_string, verify=False, headers=myHeader, timeout=timeout)
+            mylogger(f'Status Code: {myResp.status_code}')
+            mylogger(myResp.text)
+            response = ET.fromstring(myResp.text)
             # print 'response.attrib:', response.attrib
             # If something went wrong, the response will have an 'errorCode' key
             # if so, then print the error message and raise an exception
             if 'errorCode' in response.keys():
-                print 'command:', command_string
-                print 'response.attrib:', response.attrib
+                mylogger(f'command: {command_string}')
+                mylogger('response.attrib: {response.attrib}')
                 raise ResponseError("'%s': '%s'" % (response.attrib['errorCode'], response.attrib['errorDescr']))
             else:
                 return response
     except TimeoutError:
-        print 'Timed out communicating with %s' % server
+        print(f'Timed out communicating with {server}')
         sys.exit()
     # except ConnectionError:
     #     print 'Network problem connecting to %s' % server
@@ -501,7 +517,7 @@ if __name__ == "__main__":
     PASSWORD = 'MPan4scd'
 
     import sys
-
+    cveLogger.initlogging(sys.argv)
 
     # Test the set_sol_adminstate() method
     if 0:
@@ -516,43 +532,44 @@ if __name__ == "__main__":
                 # lop off the first two elements in the path since they're the same for all responses
                 path = '/'.join(key.split('/')[2:])
                 out_string += path + ',' + value + ','
-            print out_string
+            print(out_string)
 
     if 0:
         with UcsServer(IPADDR,USERNAME,PASSWORD) as server:
-            print '== chassis info =='
+            print('== chassis info ==')
             server.get_chassis_info()
-            print '== CIMC info =='
+            print('== CIMC info ==')
             server.get_cimc_info()
             # print '== Boot order =='
             # myserver.get_boot_order()
-            print '== Drive inventory =='
+            print('== Drive inventory ==')
             server.get_drive_inventory()
-            print '== FW versions =='
+            print('== FW versions ==')
             server.get_fw_versions()
-            print '== BIOS settings =='
+            print('== BIOS settings ==')
             server.get_bios_settings()
-            print '== PCI inventory =='
+            print('== PCI inventory ==')
             server.get_pci_inventory()
-            print '== Interface inventory =='
+            print('== Interface inventory ==')
             server.get_interface_inventory()
-            print '== PSU inventory =='
+            print('== PSU inventory ==')
             server.get_psu_inventory()
 
             pprint(server.inventory)
 
 
-    if 0:
+    """if 0:
         if server.login():
             for item,command in command_strings.items():
                 start = time.time()
                 full_command = command % server.session_cookie
                 response = post_request(server.ipaddress, full_command)
-                print item
+                print(item)
                 tmp = response.find('outConfigs').getchildren()
                 for item in tmp:
-                    print item.tag, item.attrib
-                print (time.time() - start)
-                print '\n'
+                    print(item.tag, item.attrib)
+                print(time.time() - start)
+                print('\n')
 
             server.logout()
+    """
