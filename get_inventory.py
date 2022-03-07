@@ -4,13 +4,20 @@ from pycimc import *
 import config
 from pprint import pprint
 import cveLogger
-from cveLogger import mylogger
 
 import sys
 cveLogger.initlogging(sys.argv)
 
+wildcard = '0.0.0.0'
 for address in config.SERVERS:
-    with UcsServer(address, config.USERNAME, config.PASSWORD) as server:
+    if config.CREDS.get(address):
+        USERNAME = config.CREDS[address].get('username')
+        PASSWORD = config.CREDS[address].get('password')
+    else:
+        USERNAME = config.CREDS[wildcard].get('username')
+        PASSWORD = config.CREDS[wildcard].get('password')
+
+    with UcsServer(address, USERNAME, PASSWORD) as server:
         out_string = server.ipaddress
         if server.get_interface_inventory():
             for int in server.inventory['adaptor']:
@@ -19,6 +26,6 @@ for address in config.SERVERS:
                     out_string += ',port-'+str(port['portId'])+','+port['adminSpeed']+','+port['linkState']
                     for vnic in port['vnic']:
                         out_string += ','+str(vnic['name'])+','+str(vnic['mac'])
-                print(out_string)
+                pprint(out_string)
         else:
-            print('get_interface_inventory() returned False')
+            pprint('get_interface_inventory() returned False')

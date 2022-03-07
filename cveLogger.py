@@ -1,3 +1,4 @@
+__author__ = 'George Bekmezian (george.bekmezian@cvetech.com)'
 import datetime
 import logging
 from logging.handlers import RotatingFileHandler

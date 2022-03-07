@@ -16,7 +16,7 @@ import cveLogger
 from cveLogger import mylogger
 from exception_mapper import *
 
-LOGIN_TIMEOUT = 5.0
+LOGIN_TIMEOUT = 10.0
 REQUEST_TIMEOUT = 10.0
 CREATE_DRIVE_TIMEOUT = 60.0
 
@@ -303,17 +303,14 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for config in out_configs.getchildren():
-                print(f'config: {config}')
                 adaptorUnit_list.append(config.attrib)
             #self.inventory['adaptor'] = adaptorUnit_list
-            print('config should have printed')
             # query adaptorExtEthIf classId to find all physical network interfaces
             command_string = '<configResolveClass cookie="%s" inHierarchical="false" classId="%s"/>' %\
                              (self.session_cookie, 'adaptorExtEthIf')
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for config in out_configs.getchildren():
-                print(f'config2: {config}')
                 adaptorExtEthIf_list.append(config.attrib)
             #self.inventory['ext_eth_if'] = adaptorExtEthIf_list
 
@@ -323,7 +320,6 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for config in out_configs.getchildren():
-                print(f'config3: {config}')
                 adaptorHostEthIf_list.append(config.attrib)
             #self.inventory['host_eth_if'] = adaptorHostEthIf_list
 
@@ -348,7 +344,9 @@ class UcsServer():
 
             out_list.append(adaptor)
 
+        mylogger(f'Setting adaptor to: {out_list}')
         self.inventory['adaptor'] = out_list
+        return True
 
     def get_pci_inventory(self):
         """
@@ -432,13 +430,29 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             print(f'Changed SOL admin state to {state}')
 
-    def get_users(self):
-
-        command_string = '<configResolveClass cookie="%s" inHierarchical="false" classId="aaaUser"/>' % self.session_cookie
+    def get_users(self, newUser = False):
+        command_string = f'<configResolveClass cookie="{self.session_cookie}" inHierarchical="false" classId="aaaUser"/>' 
         with RemapExceptions():
             response_element = post_request(self.ipaddress, command_string)
-            self.inventory['users'] =  [user.attrib for user in response_element.findall('*/aaaUser')
-                    if user.attrib['name']]
+            if newUser:
+                return [user.attrib for user in response_element.findall('*/aaaUser')
+                        if user.attrib['name'] == ''][0]
+            else:
+                self.inventory['users'] =  [user.attrib for user in response_element.findall('*/aaaUser')
+                        if user.attrib['name']]
+    
+    def createUser(self, uName, pWord, priv = 'admin', accountStatus = 'active'):
+        nextAvail = self.get_users(newUser = True)
+        commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{nextAvail.get("dn")}">\
+            <inConfig> <aaaUser id="{nextAvail.get("id")}" name="{uName}" pwd="{pWord}" priv="{priv}"\
+            accountStatus="{accountStatus}"/> </inConfig> </configConfMo>'
+        
+        response_element = post_request(self.ipaddress, commandString)
+        if response_element.attrib.get('errorCode'):
+            mylogger(f'Error: failed to create user: {uName}')
+        else:
+            mylogger(f'Success: successfully created user: {uName}')
+
 
     def set_password(self, userid, password):
         """<configConfMo cookie="<cookie>" inHierarchical="false" dn="sys/user-ext/user-3">
@@ -492,14 +506,14 @@ def post_request(server, command_string, timeout=REQUEST_TIMEOUT):
             mylogger(f'command_string: {command_string}')
             myResp = requests.post(url, data=command_string, verify=False, headers=myHeader, timeout=timeout)
             mylogger(f'Status Code: {myResp.status_code}')
-            mylogger(myResp.text)
+            mylogger(f'Resp Text: {myResp.text}')
             response = ET.fromstring(myResp.text)
             # print 'response.attrib:', response.attrib
             # If something went wrong, the response will have an 'errorCode' key
             # if so, then print the error message and raise an exception
             if 'errorCode' in response.keys():
-                mylogger(f'command: {command_string}')
-                mylogger('response.attrib: {response.attrib}')
+                mylogger(f'errorCode found. command: {command_string}')
+                mylogger(f'errorCode found. response.attrib: {response.attrib}')
                 raise ResponseError("'%s': '%s'" % (response.attrib['errorCode'], response.attrib['errorDescr']))
             else:
                 return response

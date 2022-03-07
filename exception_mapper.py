@@ -1,4 +1,3 @@
-import logging
 import requests
 
 class ResponseError(Exception):
