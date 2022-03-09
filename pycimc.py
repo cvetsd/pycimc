@@ -109,7 +109,8 @@ class UcsServer():
         auth_response = post_request(self.ipaddress, command_string)
 
         if 'errorCode' in auth_response:
-            self.status_message = "Logout Error: Server returned status code %s: %s" % (auth_response['errorCode'], auth_response['errorDescr'])
+            self.status_message = f"Logout Error: Server returned status code {auth_response['errorCode']}: {auth_response['errorDescr']}"
+            mylogger(f"Logout Error: Server returned status code {auth_response['errorCode']}: {auth_response['errorDescr']}")
             raise Exception
 
     def set_power_state(self, power_state, force=False):
@@ -162,17 +163,21 @@ class UcsServer():
             out_configs = response_element.find('outConfigs')
             self.inventory['cimc'] = out_configs.find('mgmtIf').attrib
 
-    def get_boot_order(self):
+    def getBootOrder(self):
         bootorder_dict = {}
         with RemapExceptions():
-            command_string = '<configResolveChildren cookie="%s" inHierarchical="false" inDn="sys/rack-unit-1/boot-policy"/>' % self.session_cookie
+            command_string = f'<configResolveChildren cookie="{self.session_cookie}" inHierarchical="false" inDn="sys/rack-unit-1/boot-policy"/>'
             response_element = post_request(self.ipaddress, command_string)
             out_configs = response_element.find('outConfigs')
             for i in out_configs.getchildren():
-                print(i)
+                mylogger(f'i:{i}, i.attrib:{i.attrib}')
                 try:
-                    bootorder_dict[i.attrib['order']] = i.attrib['type']
-                except:
+                    if i.attrib.get('type'):
+                        bootorder_dict[i.attrib['order']] = i.attrib['type']
+                    else:
+                        mylogger(f'Skipping as no type in this item with dn: {i.attrib.get("dn")}')
+                except Exception as e:
+                    mylogger(f'Caught exception: {e.with_traceback}')
                     self.inventory['boot_order'] = None
                     return self
 
@@ -447,12 +452,65 @@ class UcsServer():
             <inConfig> <aaaUser id="{nextAvail.get("id")}" name="{uName}" pwd="{pWord}" priv="{priv}"\
             accountStatus="{accountStatus}"/> </inConfig> </configConfMo>'
         
-        response_element = post_request(self.ipaddress, commandString)
-        if response_element.attrib.get('errorCode'):
+        responseElement = post_request(self.ipaddress, commandString)
+        if responseElement.attrib.get('errorCode'):
             mylogger(f'Error: failed to create user: {uName}')
         else:
             mylogger(f'Success: successfully created user: {uName}')
 
+    def getMgmtIf(self):
+        commandString = f'<configResolveClass cookie="{self.session_cookie}" inHierarchical="true" classId="mgmtIf"/>'
+        responseElement = post_request(self.ipaddress, commandString)
+        if responseElement.attrib.get('errorCode'):
+            mylogger(f'Error: failed to retrieve mgmtIf')
+        else:
+            mylogger(f'Success: successfully retrieved mgmtIf')
+            self.inventory['mgmtIf'] = responseElement.find('outConfigs')[0].attrib
+    
+    def setMgmtIp(self, mgmtIp, mgmtSubnet, mgmtGw):
+        if self.inventory.get('mgmtIf'):
+            commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
+            <inConfig> <mgmtIf extIp="{mgmtIp}" extMask="{mgmtSubnet}" extGw="{mgmtGw}" dhcpEnable="No"/> </inConfig> </configConfMo>'
+            responseElement = post_request(self.ipaddress, commandString)
+            if responseElement.attrib.get('errorCode'):
+                mylogger(f'Error: failed to set Management IP to: {mgmtIp}')
+                return False
+            else:
+                mylogger(f'Success: successfully changed Management IP to: {mgmtIp}')
+                return True
+        else:
+            mylogger('Error: Management IP not set. Call getMgmtIf before using this method.')
+            return False
+    
+    def setHostname(self, hostname):
+        if self.inventory.get('mgmtIf'):
+            commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
+            <inConfig> <mgmtIf hostname="{hostname}"/> </inConfig> </configConfMo>'
+            responseElement = post_request(self.ipaddress, commandString)
+            if responseElement.attrib.get('errorCode'):
+                mylogger(f'Error: failed to set Hostname to: {hostname}')
+                return False
+            else:
+                mylogger(f'Success: successfully changed Hostname to: {hostname}')
+                return True
+        else:
+            mylogger('Error: Hostname not set. Call getMgmtIf before using this method.')
+            return False
+
+    def setEnableDhcp(self):
+        if self.inventory.get('mgmtIf'):
+            commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
+            <inConfig> <mgmtIf dhcpEnable="Yes"/> </inConfig> </configConfMo>'
+            responseElement = post_request(self.ipaddress, commandString)
+            if responseElement.attrib.get('errorCode'):
+                mylogger(f'Error: failed to enable DHCP')
+                return False
+            else:
+                mylogger(f'Success: successfully enabled DHCP')
+                return True
+        else:
+            mylogger('Error: DHCP not enabled. Call getMgmtIf before using this method.')
+            return False
 
     def set_password(self, userid, password):
         """<configConfMo cookie="<cookie>" inHierarchical="false" dn="sys/user-ext/user-3">

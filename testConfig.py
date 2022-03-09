@@ -1,0 +1,7 @@
+myUcsIp = '10.200.0.41'
+myPword = 'Cisco123'
+myUname = 'george'
+newIp = '10.200.0.41'
+newSubnet = '255.255.255.0'
+newGw = '10.200.0.1'
+newHostname = 'TEST'
