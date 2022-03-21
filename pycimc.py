@@ -2,6 +2,7 @@
 
 __author__ = 'Rob Horner (robert@horners.org)'
 
+from tokenize import String
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import xml.etree.ElementTree as ET
@@ -186,6 +187,17 @@ class UcsServer():
             self.inventory['boot_order'] = [bootorder_dict[key] for key in sorted(bootorder_dict)]
             return self
 
+    def setBootOrder(self):
+        commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
+            <inConfig> <lsbootVirtualMedia access="read-only" order="1" type="virtual-media" dn="sys/rack-unit-1/boot-policy/vm-read-only" ></lsbootVirtualMedia><lsbootStorage dn="sys/rack-unit-1/boot-policy/storage-read-write" access="read-write" order="2" type="storage" ></lsbootStorage><lsbootBootSecurity dn="sys/rack-unit-1/boot-policy/boot-security" secureBoot="disabled" ></lsbootBootSecurity> </inConfig> </configConfMo>'
+        responseElement = post_request(self.ipaddress, commandString)
+        if responseElement.attrib.get('errorCode'):
+            mylogger(f'Error: failed to set Management IP to: {mgmtIp}')
+            return False
+        else:
+            mylogger(f'Success: changed Management IP to: {mgmtIp}')
+            return True
+
     def get_drive_inventory(self):
         """
         Retrieve both physical and virtual drive inventories.
@@ -236,6 +248,28 @@ class UcsServer():
             print('configure_pd_as_unconfigured_good_from_jbod() must be called with "force=True" to force to JBOD')
             return False
 
+    def setDriveAsUnconfigGood(self, driveId):
+        try:
+            myDn = [drive for drive in self.inventory['drives'].get('storageLocalDisk') if drive['id'] == str(driveId)][0].get('dn')
+        except Exception as e:
+            mylogger(f'Caught exception: {e.with_traceback}')
+            mylogger(f'Could not find drive with drive ID: {driveId}. Verify drive ID and ensure drive inventory is already retrieved.')
+            return
+
+        commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="true" dn="{myDn}">\
+            <inConfig>\
+                <storageLocalDisk dn="{myDn}" id="{driveId}"\
+                adminAction="make-unconfigured-good"/>\
+            </inConfig></configConfMo>'
+        
+        responseElement = post_request(self.ipaddress, commandString, timeout = 120)
+
+        if responseElement.attrib.get('errorCode'):
+            mylogger(f'Error: failed to set drive {driveId} to unconfigured good')
+            return False
+        else:
+            mylogger(f'Success: set drive {driveId} to unconfigured good')
+            return True
 
     def print_drive_inventory(self):
         """
@@ -456,7 +490,7 @@ class UcsServer():
         if responseElement.attrib.get('errorCode'):
             mylogger(f'Error: failed to create user: {uName}')
         else:
-            mylogger(f'Success: successfully created user: {uName}')
+            mylogger(f'Success: created user: {uName}')
 
     def getMgmtIf(self):
         commandString = f'<configResolveClass cookie="{self.session_cookie}" inHierarchical="true" classId="mgmtIf"/>'
@@ -464,7 +498,7 @@ class UcsServer():
         if responseElement.attrib.get('errorCode'):
             mylogger(f'Error: failed to retrieve mgmtIf')
         else:
-            mylogger(f'Success: successfully retrieved mgmtIf')
+            mylogger(f'Success: retrieved mgmtIf')
             self.inventory['mgmtIf'] = responseElement.find('outConfigs')[0].attrib
     
     def setMgmtIp(self, mgmtIp, mgmtSubnet, mgmtGw):
@@ -476,12 +510,27 @@ class UcsServer():
                 mylogger(f'Error: failed to set Management IP to: {mgmtIp}')
                 return False
             else:
-                mylogger(f'Success: successfully changed Management IP to: {mgmtIp}')
+                mylogger(f'Success: changed Management IP to: {mgmtIp}')
                 return True
         else:
             mylogger('Error: Management IP not set. Call getMgmtIf before using this method.')
             return False
     
+    def setMgmtIfMode(self, nicMode = "dedicated", nicRedundancy = "none"):
+        if self.inventory.get('mgmtIf'):
+            commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
+            <inConfig> <mgmtIf nicMode="{nicMode}" nicRedundancy="{nicRedundancy}"/> </inConfig> </configConfMo>'
+            responseElement = post_request(self.ipaddress, commandString)
+            if responseElement.attrib.get('errorCode'):
+                mylogger(f'Error: failed to set Management Interfce mode: {nicMode}')
+                return False
+            else:
+                mylogger(f'Success: set Management Interface nicMode to: {nicMode}')
+                return True
+        else:
+            mylogger('Error: Management Interface mode not set. Call getMgmtIf before using this method.')
+            return False
+
     def setHostname(self, hostname):
         if self.inventory.get('mgmtIf'):
             commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
