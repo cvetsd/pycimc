@@ -192,10 +192,10 @@ class UcsServer():
             <inConfig> <lsbootVirtualMedia access="read-only" order="1" type="virtual-media" dn="sys/rack-unit-1/boot-policy/vm-read-only" ></lsbootVirtualMedia><lsbootStorage dn="sys/rack-unit-1/boot-policy/storage-read-write" access="read-write" order="2" type="storage" ></lsbootStorage><lsbootBootSecurity dn="sys/rack-unit-1/boot-policy/boot-security" secureBoot="disabled" ></lsbootBootSecurity> </inConfig> </configConfMo>'
         responseElement = post_request(self.ipaddress, commandString)
         if responseElement.attrib.get('errorCode'):
-            mylogger(f'Error: failed to set Management IP to: {mgmtIp}')
+            mylogger(f'Error: failed to set boot order')
             return False
         else:
-            mylogger(f'Success: changed Management IP to: {mgmtIp}')
+            mylogger(f'Success: changed boot order')
             return True
 
     def get_drive_inventory(self):
@@ -254,7 +254,7 @@ class UcsServer():
         except Exception as e:
             mylogger(f'Caught exception: {e.with_traceback}')
             mylogger(f'Could not find drive with drive ID: {driveId}. Verify drive ID and ensure drive inventory is already retrieved.')
-            return
+            return False
 
         commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="true" dn="{myDn}">\
             <inConfig>\
@@ -262,7 +262,7 @@ class UcsServer():
                 adminAction="make-unconfigured-good"/>\
             </inConfig></configConfMo>'
         
-        responseElement = post_request(self.ipaddress, commandString, timeout = 120)
+        responseElement = post_request(self.ipaddress, commandString, timeout = CREATE_DRIVE_TIMEOUT)
 
         if responseElement.attrib.get('errorCode'):
             mylogger(f'Error: failed to set drive {driveId} to unconfigured good')
@@ -270,6 +270,30 @@ class UcsServer():
         else:
             mylogger(f'Success: set drive {driveId} to unconfigured good')
             return True
+
+    def setVirtualDriveAsBootable(self, virtualDriveName):
+        try:
+            myVirtualDrive = [drive for drive in self.inventory['drives'].get('storageVirtualDrive') if drive['name'] == virtualDriveName][0]
+        except Exception as e:
+            mylogger(f'Caught exception: {e.with_traceback}')
+            mylogger(f'Could not find virtual drive with name: {virtualDriveName}. Verify drive name and ensure drive inventory is already retrieved.')
+            return False
+        
+        commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="true" dn="{myVirtualDrive.get("dn")}">\
+            <inConfig>\
+                <storageVirtualDrive dn="{myVirtualDrive.get("dn")}" id="{myVirtualDrive.get("id")}"\
+                adminAction="set-boot-drive"/>\
+            </inConfig></configConfMo>'
+        
+        responseElement = post_request(self.ipaddress, commandString, timeout = CREATE_DRIVE_TIMEOUT)
+
+        if responseElement.attrib.get('errorCode'):
+            mylogger(f'Error: failed to set virtual drive {myVirtualDrive.get("dn")} to boot drive')
+            return False
+        else:
+            mylogger(f'Success: set drive {myVirtualDrive.get("dn")} to boot drive')
+            return True
+
 
     def print_drive_inventory(self):
         """
@@ -286,7 +310,8 @@ class UcsServer():
             print('No drive inventory found! Please run "get_drive_inventory() on the server instance first.')
 
     @timeit
-    def create_virtual_drive(self, controller_path, virtual_drive_name, raid_level, raid_size, drive_group, write_policy='Write Back Good BBU', force=False, debug=False):
+    def create_virtual_drive(self, controller_path, virtual_drive_name, raid_level, raid_size, drive_group, 
+        write_policy, strip_size="64k", force=False, debug=False):
         """
         <configConfMo cookie='$REPLACE_ACTUAL_COOKIE_VALUE' inHierarchical='false' dn='sys/rack-unit-1/board/storage-SAS-SLOT-2/virtual-drive-create'>
            <inConfig>
@@ -301,19 +326,20 @@ class UcsServer():
         </configConfMo>
         """
         if force:
-            command_string = '''<configConfMo cookie="%s" inHierarchical="false" dn="%s/virtual-drive-create">
-               <inConfig>
-                  <storageVirtualDriveCreatorUsingUnusedPhysicalDrive dn="%s/virtual-drive-create"
-                   virtualDriveName="%s"
-                   raidLevel="%s"
-                   size="%s"
-                   driveGroup="[%s]"
-                   writePolicy="%s"
-                   adminState="trigger"/>
-               </inConfig>
-            </configConfMo>''' % (self.session_cookie, controller_path, controller_path, virtual_drive_name, raid_level, raid_size, drive_group, write_policy)
+            command_string = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{controller_path}/virtual-drive-create">\
+               <inConfig>\
+                  <storageVirtualDriveCreatorUsingUnusedPhysicalDrive dn="{controller_path}/virtual-drive-create"\
+                   virtualDriveName="{virtual_drive_name}"\
+                   raidLevel="{raid_level}"\
+                   size="{raid_size}"\
+                   driveGroup="[{drive_group}]"\
+                   writePolicy="{write_policy}"\
+                   stripSize="{strip_size}"\
+                   adminState="trigger"/>\
+               </inConfig>\
+            </configConfMo>'
             if debug:
-                print(f'XML Drive create command: {command_string}')
+                mylogger(f'XML Drive create command: {command_string}')
             response_element = post_request(self.ipaddress, command_string, timeout=CREATE_DRIVE_TIMEOUT)
             return True
         else:
@@ -404,6 +430,17 @@ class UcsServer():
                 pciEquipSlot_list.append(config.attrib)
             self.inventory['pci'] = pciEquipSlot_list
 
+    def getStorageControllerInventory(self):
+        storageControllers = []
+        with RemapExceptions():
+            command_string = f'<configResolveClass cookie="{self.session_cookie}" inHierarchical="false" classId="storageController"/>'
+            response_element = post_request(self.ipaddress, command_string)
+            out_configs = response_element.find('outConfigs')
+            for config in out_configs.getchildren():
+                storageControllers.append(config.attrib)
+            self.inventory['storageControllers'] = storageControllers
+            return True
+
     def get_psu_inventory(self):
         """
         Query the equipmentPsu class to get the power supply inventory and status on the server
@@ -469,16 +506,20 @@ class UcsServer():
             response_element = post_request(self.ipaddress, command_string)
             print(f'Changed SOL admin state to {state}')
 
-    def get_users(self, newUser = False):
+    def get_users(self, newUser = False, userName = False):
         command_string = f'<configResolveClass cookie="{self.session_cookie}" inHierarchical="false" classId="aaaUser"/>' 
         with RemapExceptions():
             response_element = post_request(self.ipaddress, command_string)
             if newUser:
                 return [user.attrib for user in response_element.findall('*/aaaUser')
                         if user.attrib['name'] == ''][0]
+            elif userName:
+                return [user.attrib for user in response_element.findall('*/aaaUser')
+                        if user.attrib['name'] == userName][0]
             else:
                 self.inventory['users'] =  [user.attrib for user in response_element.findall('*/aaaUser')
                         if user.attrib['name']]
+                return True
     
     def createUser(self, uName, pWord, priv = 'admin', accountStatus = 'active'):
         nextAvail = self.get_users(newUser = True)
@@ -489,8 +530,27 @@ class UcsServer():
         responseElement = post_request(self.ipaddress, commandString)
         if responseElement.attrib.get('errorCode'):
             mylogger(f'Error: failed to create user: {uName}')
+            return False
         else:
             mylogger(f'Success: created user: {uName}')
+            return True
+    
+    def changeUserSettings(self, uName, pWord, priv = 'admin', accountStatus = 'active'):
+        myUser = self.get_users(userName = uName)
+        if myUser:
+            commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{myUser.get("dn")}">\
+                <inConfig> <aaaUser id="{myUser.get("id")}" name="{uName}" pwd="{pWord}" priv="{priv}"\
+                accountStatus="{accountStatus}"/> </inConfig> </configConfMo>'
+            responseElement = post_request(self.ipaddress, commandString)
+            if responseElement.attrib.get('errorCode'):
+                mylogger(f'Error: failed to change user settings for user: {uName}')
+                return False
+            else:
+                mylogger(f'Success: changed user settigns for user: {uName}')
+                return True
+        else:
+            mylogger(f'Unable to find user: {uName}')
+            return False
 
     def getMgmtIf(self):
         commandString = f'<configResolveClass cookie="{self.session_cookie}" inHierarchical="true" classId="mgmtIf"/>'
@@ -500,11 +560,12 @@ class UcsServer():
         else:
             mylogger(f'Success: retrieved mgmtIf')
             self.inventory['mgmtIf'] = responseElement.find('outConfigs')[0].attrib
+            return True
     
     def setMgmtIp(self, mgmtIp, mgmtSubnet, mgmtGw):
         if self.inventory.get('mgmtIf'):
             commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
-            <inConfig> <mgmtIf extIp="{mgmtIp}" extMask="{mgmtSubnet}" extGw="{mgmtGw}" dhcpEnable="No"/> </inConfig> </configConfMo>'
+            <inConfig> <mgmtIf extIp="{mgmtIp}" extMask="{mgmtSubnet}" extGw="{mgmtGw}" dhcpEnable="no" dnsUsingDhcp="no"/> </inConfig> </configConfMo>'
             responseElement = post_request(self.ipaddress, commandString)
             if responseElement.attrib.get('errorCode'):
                 mylogger(f'Error: failed to set Management IP to: {mgmtIp}')
@@ -516,10 +577,10 @@ class UcsServer():
             mylogger('Error: Management IP not set. Call getMgmtIf before using this method.')
             return False
     
-    def setMgmtIfMode(self, nicMode = "dedicated", nicRedundancy = "none"):
+    def setMgmtIfMode(self, nicMode = "dedicated", nicRedundancy = "none", v6Enabled = "yes"):
         if self.inventory.get('mgmtIf'):
             commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
-            <inConfig> <mgmtIf nicMode="{nicMode}" nicRedundancy="{nicRedundancy}"/> </inConfig> </configConfMo>'
+            <inConfig> <mgmtIf nicMode="{nicMode}" nicRedundancy="{nicRedundancy}" autoNeg="enabled" v6extEnabled="{v6Enabled}"/> </inConfig> </configConfMo>'
             responseElement = post_request(self.ipaddress, commandString)
             if responseElement.attrib.get('errorCode'):
                 mylogger(f'Error: failed to set Management Interfce mode: {nicMode}')
@@ -639,58 +700,3 @@ if __name__ == "__main__":
 
     import sys
     cveLogger.initlogging(sys.argv)
-
-    # Test the set_sol_adminstate() method
-    if 0:
-        with UcsServer(IPADDR, USERNAME, PASSWORD) as server:
-            server.set_sol_adminstate('enable')
-
-    if 0:
-        with UcsServer(IPADDR, USERNAME, PASSWORD) as server:
-            server.get_fw_versions()
-            out_string = server.ipaddress + ','
-            for key,value in server.inventory['fw'].items():
-                # lop off the first two elements in the path since they're the same for all responses
-                path = '/'.join(key.split('/')[2:])
-                out_string += path + ',' + value + ','
-            print(out_string)
-
-    if 0:
-        with UcsServer(IPADDR,USERNAME,PASSWORD) as server:
-            print('== chassis info ==')
-            server.get_chassis_info()
-            print('== CIMC info ==')
-            server.get_cimc_info()
-            # print '== Boot order =='
-            # myserver.get_boot_order()
-            print('== Drive inventory ==')
-            server.get_drive_inventory()
-            print('== FW versions ==')
-            server.get_fw_versions()
-            print('== BIOS settings ==')
-            server.get_bios_settings()
-            print('== PCI inventory ==')
-            server.get_pci_inventory()
-            print('== Interface inventory ==')
-            server.get_interface_inventory()
-            print('== PSU inventory ==')
-            server.get_psu_inventory()
-
-            pprint(server.inventory)
-
-
-    """if 0:
-        if server.login():
-            for item,command in command_strings.items():
-                start = time.time()
-                full_command = command % server.session_cookie
-                response = post_request(server.ipaddress, full_command)
-                print(item)
-                tmp = response.find('outConfigs').getchildren()
-                for item in tmp:
-                    print(item.tag, item.attrib)
-                print(time.time() - start)
-                print('\n')
-
-            server.logout()
-    """
