@@ -82,6 +82,7 @@ class cimcTest(unittest.TestCase):
         myServer = pycimc.UcsServer(testConfig.myUcsIp, testConfig.myUname, testConfig.myPword)
         myServer.login()
         myResp = myServer.getStorageControllerInventory()
+        myServer.logout()
         self.assertTrue(myResp)
     
     def testMakeVirtualDriveBootable(self):

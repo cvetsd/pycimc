@@ -18,7 +18,7 @@ from cveLogger import mylogger
 from exception_mapper import *
 
 LOGIN_TIMEOUT = 10.0
-REQUEST_TIMEOUT = 10.0
+REQUEST_TIMEOUT = 30.0
 CREATE_DRIVE_TIMEOUT = 60.0
 
 Version = namedtuple('Version',['major','minor','maintenance'])   # Class variable - data shared
@@ -91,15 +91,15 @@ class UcsServer():
                 if 'outVersion' in response.attrib:
                     self.version = response.attrib['outVersion']
             return self
-        except TimeoutError:
-            print('Timeout connecting to {self.ipaddress}')
-            sys.exit()
+        except TimeoutError as err:
+            mylogger('Timeout connecting to {self.ipaddress}')
+            raise err
         except ConnectionError as err:
-            print (f'Could not connect to {self.ipaddress}: {err}')
-            sys.exit()
+            mylogger(f'Could not connect to {self.ipaddress}: {err}')
+            raise err
         except ResponseError as err:
-            print (f'Could not connect to {self.ipaddress}: {err}')
-            sys.exit()
+            mylogger(f'Could not connect to {self.ipaddress}: {err}')
+            raise err
 
     # @timeit
     def logout(self):
@@ -581,13 +581,25 @@ class UcsServer():
         if self.inventory.get('mgmtIf'):
             commandString = f'<configConfMo cookie="{self.session_cookie}" inHierarchical="false" dn="{self.inventory["mgmtIf"].get("dn")}">\
             <inConfig> <mgmtIf nicMode="{nicMode}" nicRedundancy="{nicRedundancy}" autoNeg="enabled" v6extEnabled="{v6Enabled}"/> </inConfig> </configConfMo>'
-            responseElement = post_request(self.ipaddress, commandString)
-            if responseElement.attrib.get('errorCode'):
-                mylogger(f'Error: failed to set Management Interfce mode: {nicMode}')
-                return False
-            else:
-                mylogger(f'Success: set Management Interface nicMode to: {nicMode}')
-                return True
+
+            try:
+                with RemapExceptions():
+                    responseElement = post_request(self.ipaddress, commandString)
+                    if responseElement.attrib.get('errorCode'):
+                        mylogger(f'Error: failed to set Management Interfce mode: {nicMode}')
+                        return False
+                    else:
+                        mylogger(f'Success: set Management Interface nicMode to: {nicMode}')
+                        return True
+            except TimeoutError as err:
+                mylogger('Timeout connecting to {self.ipaddress}')
+                raise err
+            except ConnectionError as err:
+                mylogger(f'Could not connect to {self.ipaddress}: {err}')
+                raise err
+            except ResponseError as err:
+                mylogger(f'Could not connect to {self.ipaddress}: {err}')
+                raise err
         else:
             mylogger('Error: Management Interface mode not set. Call getMgmtIf before using this method.')
             return False
